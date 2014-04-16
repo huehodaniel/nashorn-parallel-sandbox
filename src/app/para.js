@@ -19,12 +19,17 @@ var executor = function() {
 	return new BasicParallelExecutor(Java.type('app.Main').ENGINE);
 }();
 
-function squareMean(values) {
-	var total = 0;
-	values.forEach(function(e) {
-		total += Math.pow(e, 2);
-	});
-	return Math.sqrt(total/values.length);
+function squareSum(params) {
+	var values = params.values,
+		start = params.start || 0,
+		end = params.end || values.length,
+		total = 0;
+	
+	for(var i = start, len = values.length; i < end && i < len; i++) {
+		total += Math.pow(values[i], 2);
+	}
+	
+	return total/Math.pow(values.length, 2);
 }
 
 function randomParams(n) {
@@ -38,25 +43,39 @@ function randomParams(n) {
 function partition(arr, n) {
 	var result = [], len = Math.ceil(arr.length / n);
 	for(var i = 0; i < n; i++) {
-		result.push(arr.splice(0, len))
+		result.push({
+			values: arr,
+			start: i*len,
+			end: (i+1)*len
+		});
 	}
 	return result;
 }
 
-function sequential(n) {
-	var params = randomParams(n);
-	
+function sequential(array) {
 	var start = time();
-	squareMean(params);
-	return time().subtract(start).divide(NANOSEC);
+	
+	var result = squareSum({ values: array });
+	return { 
+		timeEllapsed: time().subtract(start).divide(NANOSEC),
+		value: result
+	}
 }
 
-function parallel(n, tasks) {
-	var params = Java.to(partition(randomParams(n), tasks), "java.lang.Object[]");
-	
+function parallel(array, tasks) {
 	var start = time();
-	executor.invokeAll(squareMean, params);
-	return time().subtract(start).divide(NANOSEC);
+	
+	var params = partition(array, tasks);
+		
+	var result = executor.invokeAll(squareSum, params)
+		.stream()
+		.map(function(e){ return e.get(); })
+		.reduce(function(pe, e){ return pe + e; }).get();
+	
+	return { 
+		timeEllapsed: time().subtract(start).divide(NANOSEC),
+		value: result
+	}
 }
 
 
@@ -64,13 +83,36 @@ var n = 2000000;
 var tasks = 4;
 var runs = 10;
 
-for(var i = 0; i < runs; i++) {
-	println("RUN #" + i);
-	println("----------------")
-	println("Running sequential test...");
-	println(sequential(n) + " seconds");
-	println("Running parallel test...");
-	println(parallel(n, tasks) + " seconds");
-	println("----------------")
+function printResults(results) {
+	println("Value: " + results.value + ", time ellapsed: " + results.timeEllapsed + " seconds.");
 }
-println("End...")
+
+function mean(arr) {
+	return arr.reduce(function(pe, e) {
+		return pe + e;
+	}, 0) / arr.length;
+}
+
+var summaryParallel = new Array(runs), summarySequential = new Array(runs);
+for(var i = 1; i <= runs; i++) {
+	println("RUN #" + i);
+	println("----------------");
+	
+	var array = randomParams(n);
+	
+	println("Running sequential test...");
+	var seqResults = sequential(array);
+	printResults(seqResults);
+	
+	println("Running parallel test...");
+	var parResults = parallel(array, tasks);
+	printResults(parResults);
+	
+	println("----------------");
+	summaryParallel[i - 1] = parResults.timeEllapsed;
+	summarySequential[i - 1] = seqResults.timeEllapsed;
+}
+println("Mean times: ");
+println("- Sequential: " + mean(summarySequential) + " seconds.");
+println("- Parallel: " + mean(summaryParallel) + " seconds.");
+
